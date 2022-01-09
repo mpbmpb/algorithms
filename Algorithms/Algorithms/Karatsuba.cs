@@ -1,5 +1,8 @@
 using System.Collections;
+using System.Collections.Specialized;
 using System.Numerics;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 
@@ -7,6 +10,9 @@ namespace Algorithms;
 
 public static class Karatsuba
 {
+    private static byte[]? _X { get; set; }
+    private static byte[]? _Y { get; set; }
+    private static byte[]? _result { get; set; }
 
     public static BigInteger Multiply(ulong x, ulong y)
     {
@@ -91,27 +97,58 @@ public static class Karatsuba
 
         return result;
     }
+
+    public static BigInteger SimdMultiply(ulong x, ulong y)
+    {
+        var xHigh = (uint)(x >> 32);
+        var yHigh = (uint)(y >> 32);
+        var xLow = (uint)x;
+        var yLow = (uint)y;
+    
+        var vectorX = Vector64.Create(xHigh, xLow);
+        var vectorY = Vector64.Create(yHigh, yLow);
+        var vectorZ = Vector128.Create(vectorX, vectorY);
+        var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+        var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+        var sumX = sum.GetElement(0);
+        var sumY = sum.GetElement(1);
+        
+        var sumProduct = (BigInteger)sum.GetElement(0) * sum.GetElement(1);
+        var check = sum.GetElement(0) < uint.MaxValue;
+        var a = (BigInteger)product.GetElement(0);
+        var d = product.GetElement(1);
+        var e = sumProduct - a - d;
+
+        return (a << 64) + (e << 32) + d;
+    }
     
 }
 
 [MemoryDiagnoser]
 [RankColumn]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-public class KaratsubaResearch
+public class KaratsubaBenchmarks
 {
-    public int[] Ints { get; set; }
-    public long[] Longs1Bit { get; set; }
-    public long[] Longs1Byte { get; set; }
-    public long[] Longs { get; set; }
-    public ulong[] ULongs { get; set; }
-    public long[] LongInts { get; set; }
-    public byte[] Bytes { get; set; }
-    public byte[] Bytes1Bit { get; set; }
-   
-    public long mask = 0b_0100_0000_0000;
-    public int intMask = 0b_0100_0000_0000;
+    private int[] Ints { get; set; }
+    private long[] Longs1Bit { get; set; }
+    private long[] Longs1Byte { get; set; }
+    private long[] Longs { get; set; }
+    private ulong[] ULongs { get; set; }
+    private long[] LongInts { get; set; }
+    private byte[] Bytes { get; set; }
+    private byte[] Bytes1Bit { get; set; }
+    private static byte[] byteArray = BitConverter.GetBytes(ulong.MaxValue);
+    private static BitVector32 highBits = new BitVector32(int.MaxValue - 42);
+    private static BitVector32 lowBits = new BitVector32(42);
+    private static BitVector32.Section B0 = BitVector32.CreateSection(255);
+    private static BitVector32.Section B1 = BitVector32.CreateSection(255, B0);
+    private static BitVector32.Section B2 = BitVector32.CreateSection(255, B1);
+    private static BitVector32.Section B3 = BitVector32.CreateSection(255, B2);
 
-    public KaratsubaResearch()
+    private long mask = 0b_0100_0000_0000;
+    private int intMask = 0b_0100_0000_0000;
+
+    public KaratsubaBenchmarks()
     {
         var random = new Random();
         Ints = Enumerable.Range(1, 1000000).Select(_ => random.Next(0, Int32.MaxValue)).ToArray();
@@ -133,7 +170,7 @@ public class KaratsubaResearch
             var operation = Longs[i] == 0;
         }
     }
-
+    
     [Benchmark]
     public void LongBitShiftTest()
     {
@@ -144,7 +181,7 @@ public class KaratsubaResearch
         }
         
     }
-
+    
     [Benchmark]
     public void IntBitShiftTest()
     {
@@ -155,17 +192,171 @@ public class KaratsubaResearch
         }
         
     }
-
+    
+    [Benchmark]
+    public void ByteArrayTest()
+    {
+        for (int i = 0; i < Longs.Length / 8; i++)
+        {
+            byteArray[0]--;
+            byteArray[0]++;
+            byteArray[7]--;
+            byteArray[7]++;
+            byteArray[3] = 0;
+            byteArray[3] = 0xff;
+            byteArray[5] = 0x04;
+            byteArray[5] = 0xf0;
+        }
+    }
+    
+    [Benchmark]
+    public void ByteArrayEqualsTest()
+    {
+        for (int i = 0; i < Longs.Length / 4; i++)
+        {
+            var operation = byteArray[0] == 0x00;
+            operation = byteArray[1] == 0x0f;
+            operation = byteArray[5] == 0xff;
+            operation = byteArray[7] == 0x00;
+            
+        }
+    }
+    
+    [Benchmark]
+    public void BitVectorTest()
+    {
+        for (int i = 0; i < Longs.Length / 8; i++)
+        {
+            highBits[B0]--;
+            highBits[B0]++;
+            lowBits[B3]--;
+            lowBits[B3]++;
+            highBits[B1] = 0;
+            lowBits[B1] = 0xff;
+            highBits[B2] = 0x04;
+            lowBits[B2] = 0xf0;
+        }
+    }
+    
+    [Benchmark]
+    public void BitVector1BitTest()
+    {
+        var single = BitVector32.CreateSection(1, B0);
+        for (int i = 0; i < Longs.Length / 8; i++)
+        {
+            highBits[single]--;
+            highBits[single]++;
+            lowBits[single]--;
+            lowBits[single]++;
+            highBits[single] = 0;
+            highBits[single] = 1;
+            lowBits[single] = 0;
+            lowBits[single] = 1;
+        }
+    }
+    
+    [Benchmark]
+    public void BitVector1BoolTest()
+    {
+        for (int i = 0; i < Longs.Length / 8; i++)
+        {
+            highBits[0] = true;
+            lowBits[2] = true;
+             highBits[7] = false;
+            lowBits[10] = false;
+            highBits[15] = true;
+            lowBits[20] = true;
+             highBits[31] = false;
+            lowBits[30] = false;
+        }
+    }
+    
+    [Benchmark]
+    public void BitVectorEqualsTest()
+    {
+        for (int i = 0; i < Longs.Length / 4; i++)
+        {
+            var operation = highBits[B0] == 0;
+            operation = highBits[B1] == 0x0f;
+            operation = lowBits[B2] == 0;
+            operation = highBits[B3] == 0xff;
+        }
+    }
+    
+    [Benchmark]
+    public void BitVector1BitEqualsTest()
+    {
+        var single = BitVector32.CreateSection(1, B0);
+        for (int i = 0; i < Longs.Length / 4; i++)
+        {
+            var operation = highBits[single] == 0;
+            operation = highBits[single] == 1;
+            operation = lowBits[single] == 0;
+            operation = lowBits[single] == 1;
+        }
+    }
+    
+    [Benchmark]
+    public void BitVectorByteAssign()
+    {
+        for (int i = 0; i < Ints.Length; i++)
+        {
+            var operation = new BitVector32(Ints[i]);
+        }
+    }
+    
+    [Benchmark]
+    public void AdditionTestInts()
+    {
+        for (int i = 0; i < Ints.Length / 2; i ++)
+        {
+            var a = Ints[i] + Ints[i + 1];
+            var b = Ints[i + 1] + Ints[i];
+        }
+    }
+    
+    [Benchmark]
+    public void SimdAdditionTestInts()
+    {
+        for (int i = 0; i < Ints.Length / 4; i ++)
+        {
+            var vectorX = Vector64.Create(Ints[i], Ints[i + 1]);
+            var vectorY = Vector64.Create(Ints[i + 2], Ints[i + 3]);
+            var product = AdvSimd.AddWideningLower(vectorX, vectorY);
+        }
+    }
+    
+    [Benchmark]
+    public void MultiplicationTestInts()
+    {
+        for (int i = 0; i < Ints.Length / 2; i ++)
+        {
+            var a = Ints[i] * Ints[i + 1];
+            var b = Ints[i + 1] * Ints[i];
+        }
+    }
+    
+    [Benchmark]
+    public void SimdMultiplicationTestInts()
+    {
+        for (int i = 0; i < Ints.Length / 4; i ++)
+        {
+            var vectorX = Vector64.Create(Ints[i], Ints[i + 1]);
+            var vectorY = Vector64.Create(Ints[i + 2], Ints[i + 3]);
+            var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+        }
+    }
+    
     [Benchmark]
     public void MultiplicationTestLongInts()
     {
-        for (int i = 0; i < LongInts.Length; i += 2)
+        for (int i = 0; i < LongInts.Length / 2; i ++)
         {
             var a = LongInts[i] * LongInts[i + 1];
             var b = LongInts[i + 1] * LongInts[i];
         }
     }
-
+    
     [Benchmark]
     public void MultiplicationTestULongs()
     {
@@ -174,7 +365,7 @@ public class KaratsubaResearch
             var operation = ULongs[i] * ULongs[i + 1];
         }
     }
-
+    
     [Benchmark]
     public void MultiplicationTest1BitLongs()
     {
@@ -183,7 +374,7 @@ public class KaratsubaResearch
             var operation = Longs1Bit[i] * Longs1Bit[i + 1];
         }
     }
-
+    
     [Benchmark]
     public void MultiplicationTest1ByteLongs()
     {
@@ -201,7 +392,7 @@ public class KaratsubaResearch
             var operation = Bytes[i] * Bytes[i + 1];
         }
     }
-
+    
     [Benchmark]
     public void MultiplicationTestBytes1Bit()
     {
@@ -210,25 +401,16 @@ public class KaratsubaResearch
             var operation = Bytes1Bit[i] * Bytes1Bit[i + 1];
         }
     }
-
-    [Benchmark]
-    public void SimpleKaratsuba()
-    {
-        for (int i = 0; i < ULongs.Length / 2; i++)
-        {
-            var operation = Karatsuba.MultiplySimple(ULongs[i], ULongs[i + 1]);
-        }
-    }
-
+    
     [Benchmark]
     public void BigIntMultiplication()
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
         {
-            var operation = (BigInteger)ULongs[i] * (BigInteger)ULongs[i + 1];
+            var operation = (BigInteger)ULongs[i] * ULongs[i + 1];
         }
     }
-
+    
     [Benchmark]
     public void KaratsubaTest()
     {
@@ -237,13 +419,31 @@ public class KaratsubaResearch
             var operation = Karatsuba.Multiply(ULongs[i], ULongs[i + 1]);
         }
     }
-
+    
+    [Benchmark]
+    public void SimpleKaratsuba()
+    {
+        for (int i = 0; i < ULongs.Length / 2; i++)
+        {
+            var operation = Karatsuba.MultiplySimple(ULongs[i], ULongs[i + 1]);
+        }
+    }
+    
     [Benchmark]
     public void MultiplyAdditivelyTest()
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
         {
             var operation = Karatsuba.MultiplyAdditively(ULongs[i], ULongs[i + 1]);
+        }
+    }
+
+    [Benchmark]
+    public void SimdMultiplyTest()
+    {
+        for (int i = 0; i < ULongs.Length / 2; i++)
+        {
+            var operation = Karatsuba.SimdMultiply(ULongs[i], ULongs[i + 1]);
         }
     }
 }
