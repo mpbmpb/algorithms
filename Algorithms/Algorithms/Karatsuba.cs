@@ -97,29 +97,37 @@ public static class Karatsuba
 
         return result;
     }
-
+    
     public static BigInteger SimdMultiply(ulong x, ulong y)
     {
+        if (x == 0 || y == 0) return 0;
+        
         var xHigh = (uint)(x >> 32);
         var yHigh = (uint)(y >> 32);
         var xLow = (uint)x;
         var yLow = (uint)y;
+    
+        var oneLargeInput = (xHigh >> 31) > 0 || (yHigh >> 31) > 0; // check if at least 1 of the inputs has the 1st bit set
     
         var vectorX = Vector64.Create(xHigh, xLow);
         var vectorY = Vector64.Create(yHigh, yLow);
         var vectorZ = Vector128.Create(vectorX, vectorY);
         var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
         var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+
         var sumX = sum.GetElement(0);
         var sumY = sum.GetElement(1);
+        var sumXcarry = sumX >> 32 != 0 ;
+        var sumYcarry = sumY >> 32 != 0;
+        var doubleCarry = sumXcarry & sumYcarry; // if both are true then sumProduct should be += ( 1 << 64 )
         
-        var sumProduct = (BigInteger)sum.GetElement(0) * sum.GetElement(1);
-        var check = sum.GetElement(0) < uint.MaxValue;
-        var a = (BigInteger)product.GetElement(0);
+        var sumProduct = sumX * sumY;
+        var a = product.GetElement(0);
         var d = product.GetElement(1);
         var e = sumProduct - a - d;
-
-        return (a << 64) + (e << 32) + d;
+        
+        return ((BigInteger)(a + (doubleCarry && oneLargeInput ? 1UL << 32 : 0))  << 64) 
+               + ((BigInteger)e << 32) + d;
     }
     
     public static string SimdMultiplyToString(ulong x, ulong y)
@@ -131,7 +139,7 @@ public static class Karatsuba
         var xLow = (uint)x;
         var yLow = (uint)y;
 
-        var oneLargeInput = (x >> 63) > 0 || (y >> 63) > 0; // check if at least 1 of the inputs has the 1st bit set
+        var oneLargeInput = (xHigh >> 31) > 0 || (yHigh >> 31) > 0; // check if at least 1 of the inputs has the 1st bit set
     
         var vectorX = Vector64.Create(xHigh, xLow);
         var vectorY = Vector64.Create(yHigh, yLow);
@@ -139,11 +147,13 @@ public static class Karatsuba
         var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
         var sum = AdvSimd.AddPairwiseWidening(vectorZ);
         
-        var sumXcarry = (sum.GetElement(0) >> 32) != 0 ;
-        var sumYcarry = (sum.GetElement(1) >> 32) != 0;
+        var sumX = sum.GetElement(0);
+        var sumY = sum.GetElement(1);
+        var sumXcarry = sumX >> 32 != 0 ;
+        var sumYcarry = sumY >> 32 != 0;
         var doubleCarry = sumXcarry & sumYcarry; // if both are true then sumProduct should be += ( 1 << 64 )
         
-        var sumProduct = (ulong)sum.GetElement(0) * sum.GetElement(1);
+        var sumProduct = sumX * sumY;
         var a = product.GetElement(0);
         var d = product.GetElement(1);
         var e = sumProduct - a - d;
