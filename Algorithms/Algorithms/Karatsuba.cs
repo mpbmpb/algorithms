@@ -122,6 +122,36 @@ public static class Karatsuba
         return (a << 64) + (e << 32) + d;
     }
     
+    public static string SimdMultiplyToString(ulong x, ulong y)
+    {
+        if (x == 0 || y == 0) return "0";
+        
+        var xHigh = (uint)(x >> 32);
+        var yHigh = (uint)(y >> 32);
+        var xLow = (uint)x;
+        var yLow = (uint)y;
+    
+        var vectorX = Vector64.Create(xHigh, xLow);
+        var vectorY = Vector64.Create(yHigh, yLow);
+        var vectorZ = Vector128.Create(vectorX, vectorY);
+        var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+        var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+        var sumX = (uint)sum.GetElement(0);
+        var sumY = (uint)sum.GetElement(1);
+        var sumXcarry = (sum.GetElement(0) >> 32) != 0;  // if true then sumProduct should be += ( sumY << 32 ) 
+        var sumYcarry = (sum.GetElement(1) >> 32) != 0;  // if true then sumProduct should be += ( sumX << 32 )
+        var doubleCarry = sumXcarry & sumYcarry;
+        //                                                  if both are true then sumProduct should be += ( 1 << 64 )
+        var sumProduct = (ulong)sum.GetElement(0) * sum.GetElement(1);
+        var a = product.GetElement(0);
+        var d = product.GetElement(1);
+        var e = sumProduct - a - d + (sumXcarry ? (ulong)sumY << 32 : 0) + (sumYcarry ? (ulong)sumX << 32 : 0);
+        
+        return (((BigInteger)(a + (doubleCarry ? 1UL << 32 : 0))  << 64) 
+                + ((BigInteger)(e + (doubleCarry ? 1UL << 34 : 0)) << 32) + d ).ToString("n0");
+    }
+
+    
 }
 
 [MemoryDiagnoser]
@@ -412,6 +442,15 @@ public class KaratsubaBenchmarks
     }
     
     [Benchmark]
+    public void BigIntMultiplicationToString()
+    {
+        for (int i = 0; i < ULongs.Length / 2; i++)
+        {
+            var operation = ((BigInteger)ULongs[i] * ULongs[i + 1]).ToString("n0");
+        }
+    }
+    
+    [Benchmark]
     public void KaratsubaTest()
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
@@ -437,13 +476,22 @@ public class KaratsubaBenchmarks
             var operation = Karatsuba.MultiplyAdditively(ULongs[i], ULongs[i + 1]);
         }
     }
-
+    
     [Benchmark]
     public void SimdMultiplyTest()
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
         {
             var operation = Karatsuba.SimdMultiply(ULongs[i], ULongs[i + 1]);
+        }
+    }
+
+    [Benchmark]
+    public void SimdMutliplyToStringTest()
+    {
+        for (int i = 0; i < ULongs.Length / 2; i++)
+        {
+            var operation = Karatsuba.SimdMultiplyToString(ULongs[i], ULongs[i + 1]);
         }
     }
 }
