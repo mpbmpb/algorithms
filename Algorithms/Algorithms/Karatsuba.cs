@@ -30,20 +30,20 @@ public static class Karatsuba
         return (a << 64) + (e << 32) + d;
     }
      private static BigInteger Multiply34Bits(ulong x, ulong y)
-        {
-            var xHigh = x >> 17;
-            var yHigh = y >> 17;
-            var xTemp = x << 47;
-            var yTemp = y << 47;
-            var xLow = xTemp >> 47;
-            var yLow = yTemp >> 47;
+    {
+        var xHigh = x >> 17;
+        var yHigh = y >> 17;
+        var xTemp = x << 47;
+        var yTemp = y << 47;
+        var xLow = xTemp >> 47;
+        var yLow = yTemp >> 47;
 
-            var a = (BigInteger)MultiplyRecursive(xHigh, yHigh, 18);
-            var d = (BigInteger)MultiplyRecursive(xLow, yLow, 18);
-            var e = (BigInteger)MultiplyRecursive((xHigh + xLow), (yHigh + yLow), 18) - a - d;
+        var a = (BigInteger)MultiplyRecursive(xHigh, yHigh, 18);
+        var d = (BigInteger)MultiplyRecursive(xLow, yLow, 18);
+        var e = (BigInteger)MultiplyRecursive((xHigh + xLow), (yHigh + yLow), 18) - a - d;
 
-            return (a << 34) + (e << 17) + d;
-        }
+        return (a << 34) + (e << 17) + d;
+    }
 
     private static ulong MultiplyRecursive(ulong x, ulong y, int significantBits)
     {
@@ -130,25 +130,26 @@ public static class Karatsuba
         var yHigh = (uint)(y >> 32);
         var xLow = (uint)x;
         var yLow = (uint)y;
+
+        var oneLargeInput = (x >> 63) > 0 || (y >> 63) > 0; // check if at least 1 of the inputs has the 1st bit set
     
         var vectorX = Vector64.Create(xHigh, xLow);
         var vectorY = Vector64.Create(yHigh, yLow);
         var vectorZ = Vector128.Create(vectorX, vectorY);
         var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
         var sum = AdvSimd.AddPairwiseWidening(vectorZ);
-        var sumX = (uint)sum.GetElement(0);
-        var sumY = (uint)sum.GetElement(1);
-        var sumXcarry = (sum.GetElement(0) >> 32) != 0;  // if true then sumProduct should be += ( sumY << 32 ) 
-        var sumYcarry = (sum.GetElement(1) >> 32) != 0;  // if true then sumProduct should be += ( sumX << 32 )
-        var doubleCarry = sumXcarry & sumYcarry;
-        //                                                  if both are true then sumProduct should be += ( 1 << 64 )
+        
+        var sumXcarry = (sum.GetElement(0) >> 32) != 0 ;
+        var sumYcarry = (sum.GetElement(1) >> 32) != 0;
+        var doubleCarry = sumXcarry & sumYcarry; // if both are true then sumProduct should be += ( 1 << 64 )
+        
         var sumProduct = (ulong)sum.GetElement(0) * sum.GetElement(1);
         var a = product.GetElement(0);
         var d = product.GetElement(1);
-        var e = sumProduct - a - d + (sumXcarry ? (ulong)sumY << 32 : 0) + (sumYcarry ? (ulong)sumX << 32 : 0);
+        var e = sumProduct - a - d;
         
-        return (((BigInteger)(a + (doubleCarry ? 1UL << 32 : 0))  << 64) 
-                + ((BigInteger)(e + (doubleCarry ? 1UL << 34 : 0)) << 32) + d ).ToString("n0");
+        return (((BigInteger)(a + (doubleCarry && oneLargeInput ? 1UL << 32 : 0))  << 64) 
+                + ((BigInteger)e << 32) + d ).ToString("n0");
     }
 
     
