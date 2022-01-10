@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Specialized;
 using System.Numerics;
 using System.Runtime.Intrinsics;
@@ -11,10 +10,6 @@ namespace Algorithms;
 
 public static class Karatsuba
 {
-    private static byte[]? _X { get; set; }
-    private static byte[]? _Y { get; set; }
-    private static byte[]? _result { get; set; }
-
     public static BigInteger Multiply(ulong x, ulong y)
     {
         var xHigh = x >> 32;
@@ -41,7 +36,7 @@ public static class Karatsuba
 
         var a = (BigInteger)MultiplyRecursive(xHigh, yHigh, 18);
         var d = (BigInteger)MultiplyRecursive(xLow, yLow, 18);
-        var e = (BigInteger)MultiplyRecursive((xHigh + xLow), (yHigh + yLow), 18) - a - d;
+        var e = MultiplyRecursive((xHigh + xLow), (yHigh + yLow), 18) - a - d;
 
         return (a << 34) + (e << 17) + d;
     }
@@ -64,7 +59,7 @@ public static class Karatsuba
 
         var a = MultiplyRecursive(xHigh, yHigh, significantBits);
         var d = MultiplyRecursive(xLow, yLow, significantBits);
-        var e = MultiplyRecursive((xHigh + xLow), (yHigh + yLow), (significantBits + 2)) - a - d;
+        var e = MultiplyRecursive(xHigh + xLow, yHigh + yLow, (significantBits + 2)) - a - d;
 
         return (a << (significantBits * 2)) + (e << significantBits) + d;
     }
@@ -89,7 +84,7 @@ public static class Karatsuba
     public static BigInteger MultiplyAdditively(ulong x, ulong y)
     {
         BigInteger result = 0;
-        BigInteger Y = (BigInteger)y;
+        BigInteger Y = y;
 
         for (int radix = 0; radix < 64; radix++)
         {
@@ -410,40 +405,7 @@ public class KaratsubaBenchmarks
             lowBits[B2] = 0xf0;
         }
     }
-    
-    [Benchmark]
-    public void BitVector1BitTest()
-    {
-        var single = BitVector32.CreateSection(1, B0);
-        for (int i = 0; i < Longs.Length / 8; i++)
-        {
-            highBits[single]--;
-            highBits[single]++;
-            lowBits[single]--;
-            lowBits[single]++;
-            highBits[single] = 0;
-            highBits[single] = 1;
-            lowBits[single] = 0;
-            lowBits[single] = 1;
-        }
-    }
-    
-    [Benchmark]
-    public void BitVector1BoolTest()
-    {
-        for (int i = 0; i < Longs.Length / 8; i++)
-        {
-            highBits[0] = true;
-            lowBits[2] = true;
-             highBits[7] = false;
-            lowBits[10] = false;
-            highBits[15] = true;
-            lowBits[20] = true;
-             highBits[31] = false;
-            lowBits[30] = false;
-        }
-    }
-    
+     
     [Benchmark]
     public void BitVectorEqualsTest()
     {
@@ -487,18 +449,7 @@ public class KaratsubaBenchmarks
             var b = Ints[i + 1] + Ints[i];
         }
     }
-    
-    [Benchmark]
-    public void SimdAdditionTestInts()
-    {
-        for (int i = 0; i < Ints.Length / 4; i ++)
-        {
-            var vectorX = Vector64.Create(Ints[i], Ints[i + 1]);
-            var vectorY = Vector64.Create(Ints[i + 2], Ints[i + 3]);
-            var product = AdvSimd.AddWideningLower(vectorX, vectorY);
-        }
-    }
-    
+ 
     [Benchmark]
     public void MultiplicationTestInts()
     {
@@ -519,62 +470,7 @@ public class KaratsubaBenchmarks
             var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
         }
     }
-    
-    [Benchmark]
-    public void MultiplicationTestLongInts()
-    {
-        for (int i = 0; i < LongInts.Length / 2; i ++)
-        {
-            var a = LongInts[i] * LongInts[i + 1];
-            var b = LongInts[i + 1] * LongInts[i];
-        }
-    }
-    
-    [Benchmark]
-    public void MultiplicationTestULongs()
-    {
-        for (int i = 0; i < ULongs.Length / 2; i++)
-        {
-            var operation = ULongs[i] * ULongs[i + 1];
-        }
-    }
-    
-    [Benchmark]
-    public void MultiplicationTest1BitLongs()
-    {
-        for (int i = 0; i < Longs1Bit.Length / 2; i++)
-        {
-            var operation = Longs1Bit[i] * Longs1Bit[i + 1];
-        }
-    }
-    
-    [Benchmark]
-    public void MultiplicationTest1ByteLongs()
-    {
-        for (int i = 0; i < Longs1Byte.Length / 2; i++)
-        {
-            var operation = Longs1Byte[i] * Longs1Byte[i + 1];
-        }
-    }
-    
-    [Benchmark]
-    public void MultiplicationTestBytes()
-    {
-        for (int i = 0; i < Bytes.Length / 2; i++)
-        {
-            var operation = Bytes[i] * Bytes[i + 1];
-        }
-    }
-    
-    [Benchmark]
-    public void MultiplicationTestBytes1Bit()
-    {
-        for (int i = 0; i < Bytes1Bit.Length / 2; i++)
-        {
-            var operation = Bytes1Bit[i] * Bytes1Bit[i + 1];
-        }
-    }
-    
+   
     [Benchmark]
     public void BigIntMultiplication()
     {
@@ -603,7 +499,7 @@ public class KaratsubaBenchmarks
     }
     
     [Benchmark]
-    public void SimpleKaratsuba()
+    public void SimpleKaratsubaTest()
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
         {
