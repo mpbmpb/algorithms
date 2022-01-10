@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Numerics;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.Arm;
+using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 
@@ -102,64 +103,195 @@ public static class Karatsuba
     {
         if (x == 0 || y == 0) return 0;
         
-        var xHigh = (uint)(x >> 32);
-        var yHigh = (uint)(y >> 32);
-        var xLow = (uint)x;
-        var yLow = (uint)y;
-    
-        var oneLargeInput = (xHigh >> 31) > 0 || (yHigh >> 31) > 0; // check if at least 1 of the inputs has the 1st bit set
-    
-        var vectorX = Vector64.Create(xHigh, xLow);
-        var vectorY = Vector64.Create(yHigh, yLow);
-        var vectorZ = Vector128.Create(vectorX, vectorY);
-        var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
-        var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+         unchecked
+        {
+            var xHigh = (uint)(x >> 32);
+            var yHigh = (uint)(y >> 32);
+            var xLow = (uint)x;
+            var yLow = (uint)y;
 
-        var sumX = sum.GetElement(0);
-        var sumY = sum.GetElement(1);
-        var sumXcarry = sumX >> 32 != 0 ;
-        var sumYcarry = sumY >> 32 != 0;
-        var doubleCarry = sumXcarry & sumYcarry; // if both are true then sumProduct should be += ( 1 << 64 )
-        
-        var sumProduct = sumX * sumY;
-        var a = product.GetElement(0);
-        var d = product.GetElement(1);
-        var e = sumProduct - a - d;
-        
-        return ((BigInteger)(a + (doubleCarry && oneLargeInput ? 1UL << 32 : 0))  << 64) 
-               + ((BigInteger)e << 32) + d;
+            var oneLargeInput = xHigh >> 31 > 0 || yHigh >> 31 > 0; // if none of the inputs have 1st bit set
+                                                                        // then no overflow will occur later
+
+            var vectorX = Vector64.Create(xHigh, xLow);
+            var vectorY = Vector64.Create(yHigh, yLow);
+            var vectorZ = Vector128.Create(vectorX, vectorY);
+            var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+            var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+
+            var sumX = sum.GetElement(0);
+            var sumY = sum.GetElement(1);
+            var sumXcarry = sumX >> 32 != 0;
+            var sumYcarry = sumY >> 32 != 0;
+            var doubleCarry = sumXcarry & sumYcarry; // if both are true then we may get overflow later
+
+            var sumProduct = sumX * sumY;
+            var a = product.GetElement(0);
+            var d = product.GetElement(1);
+            var e = sumProduct - a - d;
+
+            // build result as 4 uints like: | aHigh | aLow + eHigh | eLow + dHigh | dLow  |
+            var dLow = (uint)d;
+            var eLow = (uint)e;
+            var dHigh = (d >> 32) + eLow;
+            var aLow = (uint)a;
+            var eHigh = (e >> 32) + aLow + (dHigh >> 32); // carry from eLow + dHigh
+            var aHigh = (uint)((a >> 32) +  (eHigh >> 32)      // carry from aLow + eHigh
+                + (doubleCarry && oneLargeInput ? 1UL : 0));   // adds 1 if overflow occurred in sumProduct
+            var eH = (uint)eHigh;
+            var dH = (uint)dHigh;
+
+            //build byte array
+            var arr = new byte[17];
+            arr[16] = 0; // ensure value is treated as positive (biginteger is built from most to least significant byte )
+            Buffer.BlockCopy(BitConverter.GetBytes(dLow), 0, arr, 0, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(dH), 0, arr, 4, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(eH), 0, arr, 8, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(aHigh), 0, arr, 12, 4);
+            
+            return new BigInteger(arr);
+        }
     }
     
     public static string SimdMultiplyToString(ulong x, ulong y)
     {
-        if (x == 0 || y == 0) return "0";
-        
-        var xHigh = (uint)(x >> 32);
-        var yHigh = (uint)(y >> 32);
-        var xLow = (uint)x;
-        var yLow = (uint)y;
+        unchecked
+        {
+            if (x == 0 || y == 0) return "0";
 
-        var oneLargeInput = (xHigh >> 31) > 0 || (yHigh >> 31) > 0; // check if at least 1 of the inputs has the 1st bit set
-    
-        var vectorX = Vector64.Create(xHigh, xLow);
-        var vectorY = Vector64.Create(yHigh, yLow);
-        var vectorZ = Vector128.Create(vectorX, vectorY);
-        var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
-        var sum = AdvSimd.AddPairwiseWidening(vectorZ);
-        
-        var sumX = sum.GetElement(0);
-        var sumY = sum.GetElement(1);
-        var sumXcarry = sumX >> 32 != 0 ;
-        var sumYcarry = sumY >> 32 != 0;
-        var doubleCarry = sumXcarry & sumYcarry; // if both are true then sumProduct should be += ( 1 << 64 )
-        
-        var sumProduct = sumX * sumY;
-        var a = product.GetElement(0);
-        var d = product.GetElement(1);
-        var e = sumProduct - a - d;
-        
-        return (((BigInteger)(a + (doubleCarry && oneLargeInput ? 1UL << 32 : 0))  << 64) 
-                + ((BigInteger)e << 32) + d ).ToString("n0");
+            var xHigh = (uint)(x >> 32);
+            var yHigh = (uint)(y >> 32);
+            var xLow = (uint)x;
+            var yLow = (uint)y;
+
+            var oneLargeInput = xHigh >> 31 > 0 || yHigh >> 31 > 0; // if none of the inputs have 1st bit set
+                                                                        // then no overflow will occur later
+
+            var vectorX = Vector64.Create(xHigh, xLow);
+            var vectorY = Vector64.Create(yHigh, yLow);
+            var vectorZ = Vector128.Create(vectorX, vectorY);
+            var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+            var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+
+            var sumX = sum.GetElement(0);
+            var sumY = sum.GetElement(1);
+            var sumXcarry = sumX >> 32 != 0;
+            var sumYcarry = sumY >> 32 != 0;
+            var doubleCarry = sumXcarry & sumYcarry; // if both are true then we may get overflow later
+
+            var sumProduct = sumX * sumY;
+            var a = product.GetElement(0);
+            var d = product.GetElement(1);
+            var e = sumProduct - a - d;
+
+            // build result as 4 uints like: | aHigh | aLow + eHigh | eLow + dHigh | dLow  |
+            var dLow = (uint)d;
+            var eLow = (uint)e;
+            var dHigh = (d >> 32) + eLow;
+            var aLow = (uint)a;
+            var eHigh = (e >> 32) + aLow + (dHigh >> 32); // carry from eLow + dHigh
+            var aHigh = (uint)((a >> 32) +  (eHigh >> 32)      // carry from aLow + eHigh
+                + (doubleCarry && oneLargeInput ? 1UL : 0));   // adds 1 if overflow occurred in sumProduct
+            var eH = (uint)eHigh;
+            var dH = (uint)dHigh;
+            
+            var byte0 = aHigh;
+            var byte1 = eH;
+            var byte2 = dH;
+            var byte3 = dLow;
+            
+            
+            if (BitConverter.IsLittleEndian)
+            {
+                // bit hack for changing ints to big endian order
+                byte0 = (aHigh & 0x000000FFU) << 24 | (aHigh & 0x0000FF00U) << 8 |
+                            (aHigh & 0x00FF0000U) >> 8 | (aHigh & 0xFF000000U) >> 24;
+                byte1 = (eH & 0x000000FFU) << 24 | (eH & 0x0000FF00U) << 8 |
+                            (eH & 0x00FF0000U) >> 8 | (eH & 0xFF000000U) >> 24;
+                byte2 = (dH & 0x000000FFU) << 24 | (dH & 0x0000FF00U) << 8 |
+                            (dH & 0x00FF0000U) >> 8 | (dH & 0xFF000000U) >> 24;
+                byte3 = (dLow & 0x000000FFU) << 24 | (dLow & 0x0000FF00U) << 8 |
+                            (dLow & 0x00FF0000U) >> 8 | (dLow & 0xFF000000U) >> 24;
+            }
+
+            //build byte array
+            var arr = new byte[16];
+            Buffer.BlockCopy(BitConverter.GetBytes(byte0), 0, arr, 0, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(byte1), 0, arr, 4, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(byte2), 0, arr, 8, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(byte3), 0, arr, 12, 4);
+            
+            return Convert.ToHexString(arr);
+        }
+    }
+
+    public static string SimdMultiplyToStringBuilder(ulong x, ulong y)
+    {
+        unchecked
+        {
+            if (x == 0 || y == 0) return "0";
+
+            var xHigh = (uint)(x >> 32);
+            var yHigh = (uint)(y >> 32);
+            var xLow = (uint)x;
+            var yLow = (uint)y;
+
+            var oneLargeInput = xHigh >> 31 > 0 || yHigh >> 31 > 0; // if none of the inputs have 1st bit set
+                                                                        // then no overflow will occur later
+
+            var vectorX = Vector64.Create(xHigh, xLow);
+            var vectorY = Vector64.Create(yHigh, yLow);
+            var vectorZ = Vector128.Create(vectorX, vectorY);
+            var product = AdvSimd.MultiplyWideningLower(vectorX, vectorY);
+            var sum = AdvSimd.AddPairwiseWidening(vectorZ);
+
+            var sumX = sum.GetElement(0);
+            var sumY = sum.GetElement(1);
+            var sumXcarry = sumX >> 32 != 0;
+            var sumYcarry = sumY >> 32 != 0;
+            var doubleCarry = sumXcarry & sumYcarry; // if both are true then we may get overflow later
+
+            var sumProduct = sumX * sumY;
+            var a = product.GetElement(0);
+            var d = product.GetElement(1);
+            var e = sumProduct - a - d;
+
+            // build result as 4 uints like: | aHigh | aLow + eHigh | eLow + dHigh | dLow  |
+            var dLow = (uint)d;
+            var eLow = (uint)e;
+            var dHigh = (d >> 32) + eLow;
+            var aLow = (uint)a;
+            var eHigh = (e >> 32) + aLow + (dHigh >> 32); // carry from eLow + dHigh
+            var aHigh = (uint)((a >> 32) +  (eHigh >> 32)      // carry from aLow + eHigh
+                + (doubleCarry && oneLargeInput ? 1UL : 0));   // adds 1 if overflow occurred in sumProduct
+            var eH = (uint)eHigh;
+            var dH = (uint)dHigh;
+
+            //build string
+            var sb = new StringBuilder();
+            var ints = new List<uint> {aHigh, eH, dH, dLow };
+            foreach (var integer in ints)
+            {
+                var bytes = BitConverter.GetBytes(integer);
+                
+                if (BitConverter.IsLittleEndian)
+                {
+                    for (int b = 3; b >= 0; b--)
+                    {
+                        sb.Append($"{bytes[b]:X2}");
+                    }
+                }
+                else
+                {
+                    for (int b = 0; b < 4; b++)
+                    {
+                        sb.Append($"{bytes[b]:X2}");
+                    }
+                }
+            }
+
+            return sb.ToString();
+        }
     }
 
     
@@ -457,7 +589,7 @@ public class KaratsubaBenchmarks
     {
         for (int i = 0; i < ULongs.Length / 2; i++)
         {
-            var operation = ((BigInteger)ULongs[i] * ULongs[i + 1]).ToString("n0");
+            var operation = ((BigInteger)ULongs[i] * ULongs[i + 1]).ToString("X");
         }
     }
     
@@ -505,4 +637,14 @@ public class KaratsubaBenchmarks
             var operation = Karatsuba.SimdMultiplyToString(ULongs[i], ULongs[i + 1]);
         }
     }
+
+   [Benchmark]
+    public void SimdMutliplyToStringBuilderTest()
+    {
+        for (int i = 0; i < ULongs.Length / 2; i++)
+        {
+            var operation = Karatsuba.SimdMultiplyToStringBuilder(ULongs[i], ULongs[i + 1]);
+        }
+    }
+
 }

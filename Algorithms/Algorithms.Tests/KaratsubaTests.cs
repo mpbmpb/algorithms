@@ -74,18 +74,43 @@ public class KaratsubaTests
     }
     
     [Theory]
-    [InlineData(18446744073709551615, 18446744073709551615, "340,282,366,920,938,463,426,481,119,284,349,108,225")]
-    [InlineData(18446744073709551615, 18446744073709551614, "340,282,366,920,938,463,408,034,375,210,639,556,610")]
-    [InlineData(18446744073709551615, 9223372036854775807, "170,141,183,460,469,231,704,017,187,605,319,778,305")]
-    [InlineData(9223372036854775808, 9223372036854775807, "85,070,591,730,234,615,856,620,279,821,087,277,056")]
-    [InlineData(9223372036854775807, 9223372036854775807, "85,070,591,730,234,615,847,396,907,784,232,501,249")]
-    [InlineData(18446744073709551615, 18446744073709, "340,282,366,920,928,287,925,748,899,990,035" )]
-    [InlineData(18446744073709, 18446744073709, "340,282,366,920,918,112,425,016,681" )]
-    [InlineData(9, 3, "27" )]
-    [InlineData(424242424242424242, 2021, "857,393,939,393,939,393,082" )]
-    public void SimdMultiplyToString_gives_correct_result(ulong x, ulong y, string expected)
+    [InlineData(18446744073709551615, 18446744073709551615)]
+    [InlineData(18446744073709551615, 18446744073709551614)]
+    [InlineData(18446744073709551615, 9223372036854775807)]
+    [InlineData(9223372036854775808, 9223372036854775807)]
+    [InlineData(9223372036854775807, 9223372036854775807)]
+    [InlineData(18446744073709551615, 18446744073709)]
+    [InlineData(18446744073709, 18446744073709)]
+    [InlineData(9, 3)]
+    [InlineData(424242424242424242, 2021)]
+    public void SimdMultiplyToString_gives_correct_result(ulong x, ulong y)
     {
+        var expected = $"{BigInteger.Multiply(x, y):X32}";
+        if (expected.Length == 33)
+            expected = expected[1..];
+        
         var result = Karatsuba.SimdMultiplyToString(x, y);
+
+        result.Should().Match(expected);
+    }
+    
+    [Theory]
+    [InlineData(18446744073709551615, 18446744073709551615)]
+    [InlineData(18446744073709551615, 18446744073709551614)]
+    [InlineData(18446744073709551615, 9223372036854775807)]
+    [InlineData(9223372036854775808, 9223372036854775807)]
+    [InlineData(9223372036854775807, 9223372036854775807)]
+    [InlineData(18446744073709551615, 18446744073709)]
+    [InlineData(18446744073709, 18446744073709)]
+    [InlineData(9, 3)]
+    [InlineData(424242424242424242, 2021)]
+    public void SimdMultiplyToStringBuilder_gives_correct_result(ulong x, ulong y)
+    {
+        var expected = $"{BigInteger.Multiply(x, y):X32}";
+        if (expected.Length == 33)
+            expected = expected[1..];
+        
+        var result = Karatsuba.SimdMultiplyToStringBuilder(x, y);
 
         result.Should().Match(expected);
     }
